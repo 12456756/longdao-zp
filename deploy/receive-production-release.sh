@@ -43,10 +43,10 @@ for service in api worker web; do
 done
 cp -p deploy/runtime.production.env "$backup/runtime.production.env"
 
-printf 'services:\n  api:\n    image: %s\n' "$backend" > "$backup/candidate.yml"
+printf 'services:\n  api:\n    image: %s\n    pull_policy: never\n' "$backend" > "$backup/candidate.yml"
 candidate=("${compose[@]}" -f "$backup/candidate.yml")
 "${candidate[@]}" config --quiet
-"${candidate[@]}" run --rm --no-deps --pull never api node scripts/migrate-postgres.mjs --status
+"${candidate[@]}" run --rm --no-deps api node scripts/migrate-postgres.mjs --status
 
 # Keep the pre-upgrade dump consistent with application writes.
 resume_previous=true
@@ -55,15 +55,15 @@ docker exec "$db" sh -ec 'pg_dump -Fc -U "$POSTGRES_USER" -d "$POSTGRES_DB"' > "
 rehearsal="release_check_${revision:0:12}_$$"
 docker exec "$db" sh -ec 'createdb -U "$POSTGRES_USER" "$1"' _ "$rehearsal"
 docker exec -i "$db" sh -ec 'pg_restore --exit-on-error -U "$POSTGRES_USER" -d "$1"' _ "$rehearsal" < "$backup/postgres.dump"
-"${candidate[@]}" run --rm --no-deps --pull never -e DATABASE_URL= -e "PGDATABASE=$rehearsal" api node scripts/migrate-postgres.mjs
-"${candidate[@]}" run --rm --no-deps --pull never -e DATABASE_URL= -e "PGDATABASE=$rehearsal" api node scripts/migrate-postgres.mjs --check
+"${candidate[@]}" run --rm --no-deps -e DATABASE_URL= -e "PGDATABASE=$rehearsal" api node scripts/migrate-postgres.mjs
+"${candidate[@]}" run --rm --no-deps -e DATABASE_URL= -e "PGDATABASE=$rehearsal" api node scripts/migrate-postgres.mjs --check
 docker exec "$db" sh -ec 'dropdb -U "$POSTGRES_USER" "$1"' _ "$rehearsal"
 rehearsal=
 printf 'Pre-upgrade backup: %s\n' "$backup"
 
 resume_previous=false
-"${candidate[@]}" run --rm --no-deps --pull never api node scripts/migrate-postgres.mjs
-"${candidate[@]}" run --rm --no-deps --pull never api node scripts/migrate-postgres.mjs --check
+"${candidate[@]}" run --rm --no-deps api node scripts/migrate-postgres.mjs
+"${candidate[@]}" run --rm --no-deps api node scripts/migrate-postgres.mjs --check
 
 # The default image names remain usable for subsequent maintenance commands.
 docker tag "$backend" smartrecruit-backend:local
