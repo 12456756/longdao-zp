@@ -1,0 +1,58 @@
+name: Deploy production
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: smartrecruit-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Build Linux images
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build --target backend -t "smartrecruit-release-backend:$GITHUB_SHA" .
+          docker build --target web -t "smartrecruit-release-web:$GITHUB_SHA" .
+          docker save "smartrecruit-release-backend:$GITHUB_SHA" "smartrecruit-release-web:$GITHUB_SHA" | gzip -1 > "$RUNNER_TEMP/smartrecruit.tar.gz"
+
+      - name: Deploy over SSH
+        shell: bash
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          SSH_TARGET: ${{ vars.DEPLOY_SSH_TARGET }}
+        run: |
+          set -euo pipefail
+          : "${SSH_KEY:?}" "${SSH_KNOWN_HOSTS:?}" "${SSH_TARGET:?}"
+          umask 077
+          trap 'rm -f "$RUNNER_TEMP/deploy.key" "$RUNNER_TEMP/deploy.known_hosts"' EXIT
+          printf '%s\n' "$SSH_KEY" > "$RUNNER_TEMP/deploy.key"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$RUNNER_TEMP/deploy.known_hosts"
+          ssh -T -i "$RUNNER_TEMP/deploy.key" -o BatchMode=yes -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$RUNNER_TEMP/deploy.known_hosts" \
+            -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 \
+            "$SSH_TARGET" "deploy $GITHUB_SHA" < "$RUNNER_TEMP/smartrecruit.tar.gz"
+
+      - name: Check the public release
+        env:
+          SITE: ${{ vars.DEPLOY_PUBLIC_URL }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${SITE:?}"
+          curl -fsS --max-time 15 "$SITE/api/v1/health" |
+            jq -e '.ok and .data.service == "smartrecruit-pro-api" and .data.originPolicy == "same-origin"'
+          curl -fsS --max-time 15 -H 'Accept: text/html' "$SITE/join" -o /dev/null
