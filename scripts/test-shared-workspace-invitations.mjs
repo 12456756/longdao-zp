@@ -39,9 +39,12 @@ try {
  assert.equal(legacy.rows.find(row=>row.id===accepted).accepted_by,legacyUser)
  console.log('PASS legacy single-recipient invitations revoked without changing historical acceptance')
  await pool.end();pool=undefined
- const databaseUrl=new URL(`postgresql://${options.host}:${options.port}/${database}`)
+ const databaseUrl=new URL('postgresql://localhost')
  databaseUrl.username=options.user
  databaseUrl.password=options.password
+ databaseUrl.hostname=options.host
+ databaseUrl.port=String(options.port)
+ databaseUrl.pathname='/'+database
  const env={...process.env,NODE_ENV:'test',TENANT_SCHEMA_ROUTING:'on',INVITATION_TEST_DATABASE:database,PGDATABASE:database,
   DATABASE_URL:databaseUrl.href}
  const code=await new Promise((resolve,reject)=>{
